@@ -1,0 +1,109 @@
+version: '3.3'
+
+services:
+  front-envoy:
+    image: envoyproxy/envoy-alpine:v1.20.0
+    volumes:
+      - ./front-envoy.yaml:/etc/envoy/envoy.yaml # 挂在 front-envoy.yaml 配置文件
+      - ./certs/front-envoy/:/etc/envoy/certs/ # front-envoy 提供边缘代理所以将 ca 和 front 目录下 server、client 证书挂载至 envoy 容器中
+      - ./certs/CA/:/etc/envoy/ca/
+    networks:
+      envoymesh:
+        ipv4_address: 10.0.10.10
+        aliases:
+        - front-envoy
+    expose:
+      # Expose ports 80 (for general traffic) and 9901 (for the admin server)
+      - "80"
+      - "443"
+      - "9901"
+    ports:
+      - "8080:80"
+      - "8443:443"
+      - "9901:9901"
+
+# blue 后端 http 服务容器
+  blue:
+    image: ikubernetes/servicemesh-app:latest
+    networks:
+      envoymesh:
+        aliases:
+          - myservice # 定义的 DNS 为 myservice 因为在 docker-compose 内部使用的是docker 自带的 DNS 解析
+          - service-blue
+          - blue
+    environment:
+      - SERVICE_NAME=blue
+    expose:
+      - "80"
+
+# green 后端 http 服务容器
+  green:
+    image: ikubernetes/servicemesh-app:latest
+    networks:
+      envoymesh:
+        aliases:
+          - myservice # 定义的 DNS 为 myservice 因为在 docker-compose 内部使用的是docker 自带的 DNS 解析
+          - service-green
+          - green
+    environment:
+      - SERVICE_NAME=green
+    expose:
+      - "80"
+
+# red 后端 http 服务容器
+  red:
+    image: ikubernetes/servicemesh-app:latest
+    networks:
+      envoymesh:
+        aliases:
+          - myservice # 定义的 DNS 为 myservice 因为在 docker-compose 内部使用的是docker 自带的 DNS 解析
+          - service-red
+          - red
+    environment:
+      - SERVICE_NAME=red
+    expose:
+      - "80"
+
+# gray 容器为后端 https 服务，提供单向认证，并且 envoy 通过 sidecar 方式部署
+  gray:
+    image: ikubernetes/servicemesh-app:latest
+    volumes:
+      - ./service-gray.yaml:/etc/envoy/envoy.yaml # 挂在配置 service-gray.yaml 配置文件来代理 web 服务
+      - ./certs/service-gray/:/etc/envoy/certs/ # 挂在证书至容器中
+    networks:
+      envoymesh:
+        ipv4_address: 10.0.10.15
+        aliases:
+          - gray
+          - service-gray
+    environment:
+      - SERVICE_NAME=gray
+    expose:
+      - "80"
+      - "443"
+
+# purple 容器为后端 https 服务，提供双向认证所以需要 CA 证书，并且 envoy 通过 sidecar 方式部署
+  purple:
+    image: ikubernetes/servicemesh-app:latest
+    volumes:
+      - ./service-purple.yaml:/etc/envoy/envoy.yaml # service-purple.yaml 配置文件来代理 web 服务
+      - ./certs/service-purple/:/etc/envoy/certs/
+      - ./certs/CA/:/etc/envoy/ca/
+    networks:
+      envoymesh:
+        ipv4_address: 10.0.10.16
+        aliases:
+          - purple
+          - service-purple
+    environment:
+      - SERVICE_NAME=purple
+    expose:
+      - "80"
+      - "443"
+
+networks:
+  envoymesh:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.10.0/24
